@@ -4,8 +4,8 @@ A Python app that retrieves daily school lunch menus from Nutrislice and
 automatically emails the next day's menu to parents.
 
 This project is being built incrementally. You can retrieve and print a menu
-locally, or view it through a small Flask web app ready for Render deployment.
-Email delivery and scheduling are not implemented yet.
+locally, view it through a Flask web app, or email it through Gmail using a
+manually triggered GitHub Actions workflow. Automatic scheduling is not enabled yet.
 
 ## 1. Retrieve a menu locally
 
@@ -109,7 +109,8 @@ Enter this command in Render, where `$PORT` is expanded by its Linux shell.
 The tracked `.python-version` file selects Python 3.11 on Render, matching the
 local Python version. Render uses the latest available 3.11 patch release.
 See [Setting Your Python Version](https://render.com/docs/python-version).
-This milestone needs no environment variables or secrets.
+The menu web page needs no environment variables or secrets. The separate email
+command uses the environment variables described below.
 
 Click Deploy, then watch the build and startup output on the service's Deploys
 page. Once it is Live, open its `onrender.com` URL. You can append
@@ -123,10 +124,102 @@ the next request. That is suitable for this learning exercise; the web app does
 not run a daily email scheduler. See
 [Free instance limitations](https://render.com/docs/free).
 
+## 4. Send the first test email from GitHub
+
+Render hosts the menu website. GitHub Actions runs the email command using
+your existing Gmail account. This avoids creating a separate email-service
+account and works around the SMTP ports blocked on Render Free. Visiting the
+website does not send email, and the workflow runs only when you start it
+manually. The nightly schedule comes after confirming the first test.
+
+### Add three GitHub secrets
+
+Create a [Google app password](https://support.google.com/accounts/answer/185833)
+named **School Lunch Notifier** if you have not already. App passwords require
+2-Step Verification and an eligible Google account.
+
+In the GitHub repository, open **Settings > Secrets and variables > Actions**.
+Click **New repository secret** for each entry below:
+
+| Secret name | Value |
+| --- | --- |
+| `GMAIL_ADDRESS` | The Gmail address that created the app password |
+| `GMAIL_APP_PASSWORD` | Your generated app password; spaces are accepted |
+| `EMAIL_RECIPIENTS` | Your own email address for the first test |
+
+GitHub passes these secrets to the send step as environment variables. See
+[Using secrets in GitHub Actions](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
+The tracked `.env.example` contains only the variable names. Local `.env` files
+are ignored by Git, but the scripts do not automatically load them.
+
+### Push and run the workflow
+
+Commit and push the email code and workflow to `main`:
+
+```powershell
+git add notify.py tests/test_notify.py .env.example .github/workflows/test-email.yml README.md
+git commit -m "Add Gmail email delivery and manual test workflow"
+git push
+```
+
+Then, in GitHub:
+
+1. Open **Actions > Send test email**.
+2. Click **Run workflow** and select `main`.
+3. Enter `2026-11-19` as the menu date to test a known menu, or leave it blank
+   to use tomorrow in Eastern Time.
+4. Click **Run workflow** and open the run to view its logs.
+
+The workflow installs dependencies, runs the automated checks, then sends one
+email with `[TEST]` in its subject. Its only trigger is `workflow_dispatch`,
+so pushing a commit does not send email. See
+[Manually running a workflow](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
+
+Look for a message saying Gmail accepted the menu, then check your inbox and
+Sent folder. Server acceptance alone does not confirm inbox delivery. After
+the first test succeeds, update the `EMAIL_RECIPIENTS` secret to both parents'
+addresses, separated by a comma. No code change is needed for that update.
+
+### Preview locally
+
+No credentials are needed for a preview:
+
+```powershell
+.\.venv\Scripts\python.exe notify.py --date 2026-11-19 --test
+```
+
+`notify.py` only sends when passed `--send`. `--test` adds `[TEST]` to the
+subject; it does not bypass any menu checks or change the recipients. Without
+`--date`, the command uses tomorrow's calendar date in `America/New_York`.
+The Gmail connection uses SMTP over verified TLS on port 465, with the same
+Gmail address for sign-in and the email sender.
+
+### Skips and errors
+
+- Weekend targets, school notices, and empty or blank menus are skipped, even
+  with `--test --send`. A skip exits successfully without contacting Gmail.
+- Menu API errors, invalid responses, missing configuration, and email errors
+  exit with status 1. A response for another date is never emailed.
+- Credentials and recipient addresses are not printed in the status messages.
+- The command sends once and does not retry an uncertain send. If the connection
+  times out or fails during sending, check Gmail's Sent folder before retrying
+  to avoid duplicate messages. If only some recipients are accepted, the run
+  reports the partial failure instead of reporting full success. Repeating a
+  successful command sends another email; persistent deduplication is not
+  implemented in this manual milestone.
+
+Run the automated email checks with:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+These checks mock the provider and do not send real email. A real test still
+requires your account configuration and a confirmed inbox result.
+
 ## Next milestones
 
-1. Add email delivery with credentials and the two recipients in environment
-   variables, then send a test email.
+1. Run **Send test email** after adding the three secrets and confirm inbox delivery.
 2. Configure a Sunday-through-Thursday, 6 PM Eastern schedule. GitHub Actions is
    an option that can avoid a hosting charge, within its free usage allowances.
    See [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
