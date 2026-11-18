@@ -109,6 +109,51 @@ class NotificationTests(unittest.TestCase):
                 fetch.assert_called_once_with(expected)
                 send.assert_not_called()
 
+    def test_scheduled_send_uses_six_pm_eastern_across_dst_changes(self):
+        for instant, expected in [
+            (datetime(2026, 11, 18, 23, tzinfo=timezone.utc), date(2026, 11, 19)),
+            (datetime(2026, 7, 1, 22, tzinfo=timezone.utc), date(2026, 7, 2)),
+            (datetime(2026, 3, 8, 22, tzinfo=timezone.utc), date(2026, 3, 9)),
+            (datetime(2026, 11, 1, 23, tzinfo=timezone.utc), date(2026, 11, 2)),
+        ]:
+            with self.subTest(instant=instant), patch("notify.datetime") as clock:
+                clock.now.side_effect = lambda tz: instant.astimezone(tz)
+                result, _, _, fetch, send = self.run_command("--scheduled", "--send")
+                self.assertEqual(result, 0)
+                fetch.assert_called_once_with(expected)
+                send.assert_called_once()
+                self.assertFalse(send.call_args.args[0].startswith("[TEST]"))
+
+    def test_scheduled_send_allows_a_delay_within_the_six_pm_hour(self):
+        instant = datetime(2026, 11, 18, 23, 59, tzinfo=timezone.utc)
+        with patch("notify.datetime") as clock:
+            clock.now.side_effect = lambda tz: instant.astimezone(tz)
+            result, _, _, _, send = self.run_command("--scheduled", "--send")
+        self.assertEqual(result, 0)
+        send.assert_called_once()
+
+    def test_scheduled_send_skips_wrong_hours_and_days_without_fetching(self):
+        for instant in [
+            datetime(2026, 11, 18, 22, tzinfo=timezone.utc),  # 5 PM, winter
+            datetime(2026, 7, 1, 23, tzinfo=timezone.utc),  # 7 PM, summer
+            datetime(2026, 11, 19, 5, tzinfo=timezone.utc),  # midnight, too late
+            datetime(2026, 11, 20, 23, tzinfo=timezone.utc),  # Friday, 6 PM
+            datetime(2026, 11, 21, 23, tzinfo=timezone.utc),  # Saturday, 6 PM
+        ]:
+            with self.subTest(instant=instant), patch("notify.datetime") as clock:
+                clock.now.side_effect = lambda tz: instant.astimezone(tz)
+                result, output, _, fetch, send = self.run_command("--scheduled", "--send")
+                self.assertEqual(result, 0)
+                self.assertIn("Skipped", output)
+                fetch.assert_not_called()
+                send.assert_not_called()
+
+    def test_scheduled_send_rejects_a_date_override(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as caught:
+                self.run_command("--scheduled", "--date", "2026-11-19", "--send")
+        self.assertEqual(caught.exception.code, 2)
+
     def test_settings_allow_one_test_recipient_and_deduplicate_addresses(self):
         with patch.dict(os.environ, dict(self.settings, EMAIL_RECIPIENTS="parent@example.com, parent@example.com"), clear=True):
             _, _, recipients = notify.email_settings()

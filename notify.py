@@ -110,9 +110,14 @@ def send_email(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    date_selection = parser.add_mutually_exclusive_group()
+    date_selection.add_argument(
         "--date", type=date.fromisoformat, metavar="YYYY-MM-DD",
         help="Menu date; defaults to tomorrow in Eastern Time.",
+    )
+    date_selection.add_argument(
+        "--scheduled", action="store_true",
+        help="Only run during the 6 PM Eastern hour, Sunday through Thursday.",
     )
     parser.add_argument(
         "--send", action="store_true",
@@ -123,7 +128,11 @@ def main() -> int:
         help="Prefix the subject with [TEST]. Does not bypass menu checks.",
     )
     args = parser.parse_args()
-    target_date = args.date or (datetime.now(EASTERN).date() + timedelta(days=1))
+    now = datetime.now(EASTERN)
+    if args.scheduled and (now.weekday() not in {0, 1, 2, 3, 6} or now.hour != 18):
+        print("Skipped: scheduled emails only run from 6:00 to 6:59 PM Eastern, Sunday through Thursday.")
+        return 0
+    target_date = args.date or (now.date() + timedelta(days=1))
 
     if target_date.weekday() >= 5:
         print(f"Skipped {target_date}: the target date is a weekend.")

@@ -4,8 +4,10 @@ A Python app that retrieves daily school lunch menus from Nutrislice and
 automatically emails the next day's menu to parents.
 
 This project is being built incrementally. You can retrieve and print a menu
-locally, view it through a Flask web app, or email it through Gmail using a
-manually triggered GitHub Actions workflow. Automatic scheduling is not enabled yet.
+locally, view it through a Flask web app, or email it through Gmail using
+GitHub Actions. The email workflow includes a 6 PM Eastern, Sunday-through-
+Thursday schedule and a manual test option. The schedule becomes active when
+the workflow is pushed to the repository's default branch, `main`.
 
 ## 1. Retrieve a menu locally
 
@@ -129,8 +131,8 @@ not run a daily email scheduler. See
 Render hosts the menu website. GitHub Actions runs the email command using
 your existing Gmail account. This avoids creating a separate email-service
 account and works around the SMTP ports blocked on Render Free. Visiting the
-website does not send email, and the workflow runs only when you start it
-manually. The nightly schedule comes after confirming the first test.
+website does not send email. Scheduled workflow runs send the next day's menu;
+manual runs send a message labeled `[TEST]`.
 
 ### Add three GitHub secrets
 
@@ -157,22 +159,23 @@ are ignored by Git, but the scripts do not automatically load them.
 Commit and push the email code and workflow to `main`:
 
 ```powershell
-git add notify.py tests/test_notify.py .env.example .github/workflows/test-email.yml README.md
-git commit -m "Add Gmail email delivery and manual test workflow"
+git add notify.py tests .env.example .github/workflows README.md
+git commit -m "Configure school lunch email automation"
 git push
 ```
 
 Then, in GitHub:
 
-1. Open **Actions > Send test email**.
+1. Open **Actions > School lunch email**.
 2. Click **Run workflow** and select `main`.
 3. Enter `2026-11-19` as the menu date to test a known menu, or leave it blank
    to use tomorrow in Eastern Time.
 4. Click **Run workflow** and open the run to view its logs.
 
-The workflow installs dependencies, runs the automated checks, then sends one
-email with `[TEST]` in its subject. Its only trigger is `workflow_dispatch`,
-so pushing a commit does not send email. See
+The workflow installs dependencies and runs the automated checks before sending.
+Clicking **Run workflow** uses `workflow_dispatch` and adds `[TEST]` to the
+subject. A push updates the workflow but does not immediately send an email;
+the next scheduled run uses the updated code. See
 [Manually running a workflow](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
 
 Look for a message saying Gmail accepted the menu, then check your inbox and
@@ -205,8 +208,8 @@ Gmail address for sign-in and the email sender.
   times out or fails during sending, check Gmail's Sent folder before retrying
   to avoid duplicate messages. If only some recipients are accepted, the run
   reports the partial failure instead of reporting full success. Repeating a
-  successful command sends another email; persistent deduplication is not
-  implemented in this manual milestone.
+  successful command, or rerunning a scheduled job during its allowed hour,
+  can send another email. Persistent deduplication is not implemented.
 
 Run the automated email checks with:
 
@@ -217,15 +220,54 @@ Run the automated email checks with:
 These checks mock the provider and do not send real email. A real test still
 requires your account configuration and a confirmed inbox result.
 
-## Next milestones
+## 5. Automatic delivery
 
-1. Run **Send test email** after adding the three secrets and confirm inbox delivery.
-2. Configure a Sunday-through-Thursday, 6 PM Eastern schedule. GitHub Actions is
-   an option that can avoid a hosting charge, within its free usage allowances.
-   See [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
-   and [scheduled workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
-3. Test daylight saving time, holidays, and API failures before enabling
-   unattended emails.
+After the first test succeeds, edit the `EMAIL_RECIPIENTS` repository secret to
+contain both parents' addresses, separated by a comma. Keep addresses in this
+secret rather than in the workflow file.
+
+The workflow at `.github/workflows/lunch-menu.yml` contains:
+
+```yaml
+schedule:
+  - cron: '0 18 * * 0-4'
+    timezone: America/New_York
+```
+
+This schedules a run at 6 PM Eastern each Sunday through Thursday for the
+following day's menu. GitHub supports IANA time zones directly, so the schedule
+follows daylight saving time automatically. At 6 PM, the UTC equivalent is
+23:00 during standard time or 22:00 during daylight time. See
+[GitHub's schedule syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onschedule).
+
+Scheduled runs use `python notify.py --scheduled --send`, with no `[TEST]`
+prefix. The `--scheduled` guard only permits work between 6:00 and 6:59 PM
+Eastern on Sunday through Thursday. This allows some queue delay while skipping
+very late or wrongly timed runs. It cannot be combined with a `--date` override.
+The command computes tomorrow from the current Eastern date, then skips school
+notices and unpublished menus as described above.
+
+Commit and push the scheduling changes to `main` to activate this configuration.
+You can still use **Actions > School lunch email > Run workflow** to send a
+labeled test at any time. After the first scheduled run, inspect its log and
+confirm the menu arrived in both inboxes.
+
+### Logs and scheduling limits
+
+Open **Actions > School lunch email** to view run history, success or failure,
+and the send step's output. A missing menu or holiday is a successful skip;
+an API or email error fails the run. The command does not automatically retry
+failed sends, because a disconnected SMTP session can leave delivery uncertain.
+
+GitHub may delay or drop scheduled runs during high load, so exact 6 PM delivery
+is not guaranteed. Public-repository schedules are also disabled after 60 days
+without repository activity; workflow runs alone do not keep the repository
+active. Check the Actions page periodically and re-enable the workflow if it is
+disabled. See [GitHub's schedule limitations](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+
+This repository uses standard GitHub-hosted Linux runners, which are free for
+public repositories. Private repositories use the account's included allowance.
+See [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
 
 Render's managed cron jobs are an alternative, with a $1 monthly minimum per
 job. They use UTC schedules, so that option would need an Eastern Time guard.
